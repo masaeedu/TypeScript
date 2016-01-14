@@ -6938,7 +6938,7 @@ namespace ts {
 
             checkCollisionWithCapturedSuperVariable(node, node);
             checkCollisionWithCapturedThisVariable(node, node);
-            checkBlockScopedBindingCapturedInLoop(node, symbol);
+            checkBlockScopedBindingUsedInFunctions(node, symbol);
 
             return getNarrowedTypeOfSymbol(getExportSymbolOfValueSymbolIfExported(symbol), node);
         }
@@ -6955,7 +6955,7 @@ namespace ts {
             return false;
         }
 
-        function checkBlockScopedBindingCapturedInLoop(node: Identifier, symbol: Symbol): void {
+        function checkBlockScopedBindingUsedInFunctions(node: Identifier, symbol: Symbol): void {
             if (languageVersion >= ScriptTarget.ES6 ||
                 (symbol.flags & (SymbolFlags.BlockScopedVariable | SymbolFlags.Class)) === 0 ||
                 symbol.valueDeclaration.parent.kind === SyntaxKind.CatchClause) {
@@ -6987,19 +6987,14 @@ namespace ts {
                 }
             }
 
-            const inFunction = isInsideFunction(node.parent, container);
-
-            let current = container;
-            while (current && !nodeStartsNewLexicalEnvironment(current)) {
-                if (isIterationStatement(current, /*lookInLabeledStatements*/ false)) {
-                    if (inFunction) {
-                        getNodeLinks(current).flags |= NodeCheckFlags.LoopWithBlockScopedBindingCapturedInFunction;
-                    }
-                    // mark value declaration so during emit they can have a special handling
-                    getNodeLinks(<VariableDeclaration>symbol.valueDeclaration).flags |= NodeCheckFlags.BlockScopedBindingInLoop;
-                    break;
+            // if container is a something that starts new lexical environment we don't need to do anything
+            // otherwise if container is some statement with locals then potentially we might need to introduce an explicit scope in downlevel emit 
+            if (isInsideFunction(node.parent, container) && isStatementWithLocals(container)) {
+                if (container.kind === SyntaxKind.Block && isIterationStatement(container.parent, /*lookInLabeledStatement*/ false)) {
+                    // expand container of top level locals in loops to loop itself 
+                    container = container.parent;
                 }
-                current = current.parent;
+                getNodeLinks(container).flags |= NodeCheckFlags.BlockHasBlockScopedVariablesCapturedInFunction;
             }
         }
 

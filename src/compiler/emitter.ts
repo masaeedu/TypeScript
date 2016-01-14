@@ -17,6 +17,7 @@ namespace ts {
     }
 
     type DependencyGroup = Array<ImportDeclaration | ImportEqualsDeclaration | ExportDeclaration>;
+    type StatementWithLocals = IterationStatement | SwitchStatement | Block;
 
     const enum Jump {
         Break       = 1 << 1,
@@ -362,14 +363,16 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             return true;
         }
 
-        interface ConvertedLoopState {
+        interface SynthesizedScopeState {
+            originalNode: Node;
+            
             /*
-             * set of labels that occured inside the converted loop
+             * set of labels that occured inside the target scope
              * used to determine if labeled jump can be emitted as is or it should be dispatched to calling code
              */
             labels?: Map<string>;
             /*
-             * collection of labeled jumps that transfer control outside the converted loop.
+             * collection of labeled jumps that transfer control outside the target scope.
              * maps store association 'label -> labelMarker' where
              * - label - value of label as it apprear in code
              * - label marker - return value that should be interpreted by calling code as 'jump to <label>'
@@ -378,14 +381,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             labeledNonLocalContinues?: Map<string>;
 
             /*
-             * set of non-labeled jumps that transfer control outside the converted loop
-             * used to emit dispatching logic in the caller of converted loop
+             * set of non-labeled jumps that transfer control outside the target scope
+             * used to emit dispatching logic in the caller of target scope
              */
             nonLocalJumps?: Jump;
 
             /*
              * set of non-labeled jumps that should be interpreted as local
-             * i.e. if converted loop contains normal loop or switch statement then inside this loop break should be treated as local jump
+             * i.e. if target scope contains normal loop or switch statement then inside this scope break should be treated as local jump
              */
             allowedNonLabeledJumps?: Jump;
 
@@ -397,20 +400,20 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
              * var loop = function(x) { <code where 'arguments' is replaced witg 'arguments_1'> }
              * var arguments_1 = arguments
              * for (var x;;) loop(x);
-             * otherwise semantics of the code will be different since 'arguments' inside converted loop body
-             * will refer to function that holds converted loop.
+             * otherwise semantics of the code will be different since 'arguments' inside target scope
+             * will refer to function that holds target scope.
              * This value is set on demand.
              */
             argumentsName?: string;
 
             /*
-             * alias for 'this' from the calling code stack frame in case if this was used inside the converted loop
+             * alias for 'this' from the calling code stack frame in case if this was used inside the target scope
              */
             thisName?: string;
 
             /*
-             * list of non-block scoped variable declarations that appear inside converted loop
-             * such variable declarations should be moved outside the loop body
+             * list of non-block scoped variable declarations that appear inside target scope
+             * such variable declarations should be moved outside the target scope
              * for (let x;;) {
              *     var y = 1;
              *     ...
@@ -426,31 +429,31 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             hoistedLocalVariables?: Identifier[];
         }
 
-        function setLabeledJump(state: ConvertedLoopState, isBreak: boolean, labelText: string, labelMarker: string): void {
+        function setLabeledJump(scope: SynthesizedScopeState, isBreak: boolean, labelText: string, labelMarker: string): void {
             if (isBreak) {
-                if (!state.labeledNonLocalBreaks) {
-                    state.labeledNonLocalBreaks = {};
+                if (!scope.labeledNonLocalBreaks) {
+                    scope.labeledNonLocalBreaks = {};
                 }
-                state.labeledNonLocalBreaks[labelText] = labelMarker;
+                scope.labeledNonLocalBreaks[labelText] = labelMarker;
             }
             else {
-                if (!state.labeledNonLocalContinues) {
-                    state.labeledNonLocalContinues = {};
+                if (!scope.labeledNonLocalContinues) {
+                    scope.labeledNonLocalContinues = {};
                 }
-                state.labeledNonLocalContinues[labelText] = labelMarker;
+                scope.labeledNonLocalContinues[labelText] = labelMarker;
             }
         }
 
-        function hoistVariableDeclarationFromLoop(state: ConvertedLoopState, declaration: VariableDeclaration): void {
-            if (!state.hoistedLocalVariables) {
-                state.hoistedLocalVariables = [];
+        function hoistVariableDeclarationFromScope(scope: SynthesizedScopeState, declaration: VariableDeclaration): void {
+            if (!scope.hoistedLocalVariables) {
+                scope.hoistedLocalVariables = [];
             }
 
             visit(declaration.name);
 
             function visit(node: Identifier | BindingPattern) {
                 if (node.kind === SyntaxKind.Identifier) {
-                    state.hoistedLocalVariables.push((<Identifier>node));
+                    scope.hoistedLocalVariables.push((<Identifier>node));
                 }
                 else {
                     for (const element of (<BindingPattern>node).elements) {
@@ -487,7 +490,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             let nodeToGeneratedName: string[];
             let computedPropertyNamesToGeneratedNames: string[];
 
-            let convertedLoopState: ConvertedLoopState;
+            let synthesizedScope: SynthesizedScopeState;
 
             let extendsEmitted: boolean;
             let decorateEmitted: boolean;
@@ -565,7 +568,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 generatedNameSet = undefined;
                 nodeToGeneratedName = undefined;
                 computedPropertyNamesToGeneratedNames = undefined;
-                convertedLoopState = undefined;
+                synthesizedScope = undefined;
                 extendsEmitted = false;
                 decorateEmitted = false;
                 paramEmitted = false;
@@ -1571,10 +1574,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitIdentifier(node: Identifier) {
-                if (convertedLoopState) {
+                if (synthesizedScope) {
                     if (node.text == "arguments" && resolver.isArgumentsLocalBinding(node)) {
                         // in converted loop body arguments cannot be used directly.
-                        const name = convertedLoopState.argumentsName || (convertedLoopState.argumentsName = makeUniqueName("arguments"));
+                        const name = synthesizedScope.argumentsName || (synthesizedScope.argumentsName = makeUniqueName("arguments"));
                         write(name);
                         return;
                     }
@@ -1601,8 +1604,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 if (resolver.getNodeCheckFlags(node) & NodeCheckFlags.LexicalThis) {
                     write("_this");
                 }
-                else if (convertedLoopState) {
-                    write(convertedLoopState.thisName || (convertedLoopState.thisName = makeUniqueName("this")));
+                else if (synthesizedScope) {
+                    write(synthesizedScope.thisName || (synthesizedScope.thisName = makeUniqueName("this")));
                 }
                 else {
                     write("this");
@@ -2692,6 +2695,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitBlock(node: Block) {
+                emitBlockWithLocals(node, emitBlockWorker);
+            }
+            function emitBlockWorker(node: Block, scope: SynthesizedScope) {
+                if (scope) {
+                    emitCallOfSynthesizedScope(scope, /* emitAsBlock */ false);
+                    return;
+                }
+                
                 if (isSingleLineEmptyBlock(node)) {
                     emitToken(SyntaxKind.OpenBraceToken, node.pos);
                     write(" ");
@@ -2753,13 +2764,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitDoStatement(node: DoStatement) {
-                emitLoop(node, emitDoStatementWorker);
+                emitBlockWithLocals(node, emitDoStatementWorker);
             }
 
-            function emitDoStatementWorker(node: DoStatement, loop: ConvertedLoop) {
+            function emitDoStatementWorker(node: DoStatement, loop: SynthesizedScope) {
                 write("do");
                 if (loop) {
-                    emitConvertedLoopCall(loop, /*emitAsBlock*/ true);
+                    emitCallOfSynthesizedScope(loop, /*emitAsBlock*/ true);
                 }
                 else {
                     emitNormalLoopBody(node, /*emitAsEmbeddedStatement*/ true);
@@ -2776,16 +2787,16 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitWhileStatement(node: WhileStatement) {
-                emitLoop(node, emitWhileStatementWorker);
+                emitBlockWithLocals(node, emitWhileStatementWorker);
             }
 
-            function emitWhileStatementWorker(node: WhileStatement, loop: ConvertedLoop) {
+            function emitWhileStatementWorker(node: WhileStatement, loop: SynthesizedScope) {
                 write("while (");
                 emit(node.expression);
                 write(")");
 
                 if (loop) {
-                    emitConvertedLoopCall(loop, /*emitAsBlock*/ true);
+                    emitCallOfSynthesizedScope(loop, /*emitAsBlock*/ true);
                 }
                 else {
                     emitNormalLoopBody(node, /*emitAsEmbeddedStatement*/ true);
@@ -2803,11 +2814,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     return false;
                 }
 
-                if (convertedLoopState && (getCombinedNodeFlags(decl) & NodeFlags.BlockScoped) === 0) {
+                if (synthesizedScope && (getCombinedNodeFlags(decl) & NodeFlags.BlockScoped) === 0) {
                     // we are inside a converted loop - this can only happen in downlevel scenarios
                     // record names for all variable declarations
                     for (const varDecl of decl.declarations) {
-                        hoistVariableDeclarationFromLoop(convertedLoopState, varDecl);
+                        hoistVariableDeclarationFromScope(synthesizedScope, varDecl);
                     }
                     return false;
                 }
@@ -2852,34 +2863,35 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 return started;
             }
 
-            interface ConvertedLoop {
+            interface SynthesizedScope {
                 functionName: string;
                 paramList: string;
-                state: ConvertedLoopState;
+                state: SynthesizedScopeState;
             }
 
-            function shouldConvertLoopBody(node: IterationStatement): boolean {
+            function shouldSynthesizeExplicitScope(node: StatementWithLocals): boolean {
                 return languageVersion < ScriptTarget.ES6 &&
-                    (resolver.getNodeCheckFlags(node) & NodeCheckFlags.LoopWithBlockScopedBindingCapturedInFunction) !== 0;
+                    (resolver.getNodeCheckFlags(node) & NodeCheckFlags.BlockHasBlockScopedVariablesCapturedInFunction) !== 0 &&
+                    (!synthesizedScope || synthesizedScope.originalNode !== node);
             }
 
-            function emitLoop(node: IterationStatement, loopEmitter: (n: IterationStatement, convertedLoop: ConvertedLoop) => void): void {
-                const shouldConvert = shouldConvertLoopBody(node);
-                if (!shouldConvert) {
-                    loopEmitter(node, /* convertedLoop*/ undefined);
-                }
-                else {
-                    const loop = convertLoopBody(node);
+            function emitBlockWithLocals(node: StatementWithLocals, blockEmitter: (n: StatementWithLocals, scope: SynthesizedScope) => void): void {
+                if (shouldSynthesizeExplicitScope(node)) {
+                    const scope = convertToExplicitScope(node);
                     if (node.parent.kind === SyntaxKind.LabeledStatement) {
-                        // if parent of the loop was labeled statement - attach the label to loop skipping converted loop body
+                        // if parent of the scope was labeled statement - emit label before scope
                         emitLabelAndColon(<LabeledStatement>node.parent);
                     }
-                    loopEmitter(node, loop);
+                    blockEmitter(node, scope);
+                }
+                else {
+
+                    blockEmitter(node, /* scope*/ undefined);
                 }
             }
 
-            function convertLoopBody(node: IterationStatement): ConvertedLoop {
-                const functionName = makeUniqueName("_loop");
+            function convertToExplicitScope(node: StatementWithLocals): SynthesizedScope {
+                const functionName = makeUniqueName("_scope");
 
                 let loopInitializer: VariableDeclarationList;
                 switch (node.kind) {
@@ -2901,7 +2913,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     }
                 }
 
-                const bodyIsBlock = node.statement.kind === SyntaxKind.Block;
+                const body = isIterationStatement(node, /*lookInLabeledStatements*/ false) ? (<IterationStatement>node).statement : node;
+                const bodyIsBlock = node.kind === SyntaxKind.Block; 
                 const paramList = loopParameters ? loopParameters.join(", ") : "";
 
                 writeLine();
@@ -2913,32 +2926,32 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     increaseIndent();
                 }
 
-                const convertedOuterLoopState = convertedLoopState;
-                convertedLoopState = {};
+                const outerSynthesizedScope = synthesizedScope;
+                synthesizedScope = { originalNode: node };
 
-                if (convertedOuterLoopState) {
+                if (outerSynthesizedScope) {
                     // convertedOuterLoopState !== undefined means that this converted loop is nested in another converted loop.
                     // if outer converted loop has already accumulated some state - pass it through
-                    if (convertedOuterLoopState.argumentsName) {
+                    if (outerSynthesizedScope.argumentsName) {
                         // outer loop has already used 'arguments' so we've already have some name to alias it
                         // use the same name in all nested loops
-                        convertedLoopState.argumentsName = convertedOuterLoopState.argumentsName;
+                        synthesizedScope.argumentsName = outerSynthesizedScope.argumentsName;
                     }
 
-                    if (convertedOuterLoopState.thisName) {
+                    if (outerSynthesizedScope.thisName) {
                         // outer loop has already used 'this' so we've already have some name to alias it
                         // use the same name in all nested loops
-                        convertedLoopState.thisName = convertedOuterLoopState.thisName;
+                        synthesizedScope.thisName = outerSynthesizedScope.thisName;
                     }
 
-                    if (convertedOuterLoopState.hoistedLocalVariables) {
+                    if (outerSynthesizedScope.hoistedLocalVariables) {
                         // we've already collected some non-block scoped variable declarations in enclosing loop
                         // use the same storage in nested loop
-                        convertedLoopState.hoistedLocalVariables = convertedOuterLoopState.hoistedLocalVariables;
+                        synthesizedScope.hoistedLocalVariables = outerSynthesizedScope.hoistedLocalVariables;
                     }
                 }
 
-                emitEmbeddedStatement(node.statement);
+                emitEmbeddedStatement(body);
 
                 if (!bodyIsBlock) {
                     decreaseIndent();
@@ -2948,45 +2961,45 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write(";");
                 writeLine();
 
-                if (convertedLoopState.argumentsName) {
+                if (synthesizedScope.argumentsName) {
                     // if alias for arguments is set
-                    if (convertedOuterLoopState) {
+                    if (outerSynthesizedScope) {
                         // pass it to outer converted loop
-                        convertedOuterLoopState.argumentsName = convertedLoopState.argumentsName;
+                        outerSynthesizedScope.argumentsName = synthesizedScope.argumentsName;
                     }
                     else {
                         // this is top level converted loop and we need to create an alias for 'arguments' object
-                        write(`var ${convertedLoopState.argumentsName} = arguments;`);
+                        write(`var ${synthesizedScope.argumentsName} = arguments;`);
                         writeLine();
                     }
                 }
-                if (convertedLoopState.thisName) {
+                if (synthesizedScope.thisName) {
                     // if alias for this is set
-                    if (convertedOuterLoopState) {
+                    if (outerSynthesizedScope) {
                         // pass it to outer converted loop
-                        convertedOuterLoopState.thisName = convertedLoopState.thisName;
+                        outerSynthesizedScope.thisName = synthesizedScope.thisName;
                     }
                     else {
                         // this is top level converted loop so we need to create an alias for 'this' here
                         // NOTE:
                         // if converted loops were all nested in arrow function then we'll always emit '_this' so convertedLoopState.thisName will not be set.
                         // If it is set this means that all nested loops are not nested in arrow function and it is safe to capture 'this'.
-                        write(`var ${convertedLoopState.thisName} = this;`);
+                        write(`var ${synthesizedScope.thisName} = this;`);
                         writeLine();
                     }
                 }
 
-                if (convertedLoopState.hoistedLocalVariables) {
+                if (synthesizedScope.hoistedLocalVariables) {
                     // if hoistedLocalVariables !== undefined this means that we've possibly collected some variable declarations to be hoisted later
-                    if (convertedOuterLoopState) {
+                    if (outerSynthesizedScope) {
                         // pass them to outer converted loop
-                        convertedOuterLoopState.hoistedLocalVariables = convertedLoopState.hoistedLocalVariables;
+                        outerSynthesizedScope.hoistedLocalVariables = synthesizedScope.hoistedLocalVariables;
                     }
                     else {
                         // deduplicate and hoist collected variable declarations
                         write("var ");
                         let seen: Map<string>;
-                        for (const id of convertedLoopState.hoistedLocalVariables) {
+                        for (const id of synthesizedScope.hoistedLocalVariables) {
                            // Don't initialize seen unless we have at least one element.
                            // Emit a comma to separate for all but the first element.
                            if (!seen) {
@@ -3006,8 +3019,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     }
                 }
 
-                const currentLoopState = convertedLoopState;
-                convertedLoopState = convertedOuterLoopState;
+                const currentLoopState = synthesizedScope;
+                synthesizedScope = outerSynthesizedScope;
 
                 return { functionName, paramList, state: currentLoopState };
 
@@ -3026,11 +3039,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
 
             function emitNormalLoopBody(node: IterationStatement, emitAsEmbeddedStatement: boolean): void {
                 let saveAllowedNonLabeledJumps: Jump;
-                if (convertedLoopState) {
+                if (synthesizedScope) {
                     // we get here if we are trying to emit normal loop loop inside converted loop
                     // set allowedNonLabeledJumps to Break | Continue to mark that break\continue inside the loop should be emitted as is
-                    saveAllowedNonLabeledJumps = convertedLoopState.allowedNonLabeledJumps;
-                    convertedLoopState.allowedNonLabeledJumps = Jump.Break | Jump.Continue;
+                    saveAllowedNonLabeledJumps = synthesizedScope.allowedNonLabeledJumps;
+                    synthesizedScope.allowedNonLabeledJumps = Jump.Break | Jump.Continue;
                 }
 
                 if (emitAsEmbeddedStatement) {
@@ -3044,12 +3057,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     emit(node.statement);
                 }
 
-                if (convertedLoopState) {
-                    convertedLoopState.allowedNonLabeledJumps = saveAllowedNonLabeledJumps;
+                if (synthesizedScope) {
+                    synthesizedScope.allowedNonLabeledJumps = saveAllowedNonLabeledJumps;
                 }
             }
 
-            function emitConvertedLoopCall(loop: ConvertedLoop, emitAsBlock: boolean): void {
+            function emitCallOfSynthesizedScope(scope: SynthesizedScope, emitAsBlock: boolean): void {
                 if (emitAsBlock) {
                     write(" {");
                     writeLine();
@@ -3059,16 +3072,16 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 // loop is considered simple if it does not have any return statements or break\continue that transfer control outside of the loop
                 // simple loops are emitted as just 'loop()';
                 const isSimpleLoop =
-                    !loop.state.nonLocalJumps &&
-                    !loop.state.labeledNonLocalBreaks &&
-                    !loop.state.labeledNonLocalContinues;
+                    !scope.state.nonLocalJumps &&
+                    !scope.state.labeledNonLocalBreaks &&
+                    !scope.state.labeledNonLocalContinues;
 
                 const loopResult = makeUniqueName("state");
                 if (!isSimpleLoop) {
                     write(`var ${loopResult} = `);
                 }
 
-                write(`${loop.functionName}(${loop.paramList});`);
+                write(`${scope.functionName}(${scope.paramList});`);
 
                 if (!isSimpleLoop) {
                     // for non simple loops we need to store result returned from converted loop function and use it to do dispatching
@@ -3077,13 +3090,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     // - string - used to dispatch jumps. "break" and "continue" are used to non-labeled jumps, other values are used to transfer control to
                     //   different labels
                     writeLine();
-                    if (loop.state.nonLocalJumps & Jump.Return) {
+                    if (scope.state.nonLocalJumps & Jump.Return) {
                         write(`if (typeof ${loopResult} === "object") `);
-                        if (convertedLoopState) {
+                        if (synthesizedScope) {
                             // we are currently nested in another converted loop - return unwrapped result
                             write(`return ${loopResult};`);
                             // propagate 'hasReturn' flag to outer loop
-                            convertedLoopState.nonLocalJumps |= Jump.Return;
+                            synthesizedScope.nonLocalJumps |= Jump.Return;
                         }
                         else {
                             // top level converted loop - return unwrapped value
@@ -3092,18 +3105,18 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                         writeLine();
                     }
 
-                    if (loop.state.nonLocalJumps & Jump.Break) {
+                    if (scope.state.nonLocalJumps & Jump.Break) {
                         write(`if (${loopResult} === "break") break;`);
                         writeLine();
                     }
 
-                    if (loop.state.nonLocalJumps & Jump.Continue) {
+                    if (scope.state.nonLocalJumps & Jump.Continue) {
                         write(`if (${loopResult} === "continue") continue;`);
                         writeLine();
                     }
 
                     // in case of labeled breaks emit code that either breaks to some known label inside outer loop or delegates jump decision to outer loop
-                    emitDispatchTableForLabeledJumps(loopResult, loop.state, convertedLoopState);
+                    emitDispatchTableForLabeledJumps(loopResult, scope.state, synthesizedScope);
                 }
 
                 if (emitAsBlock) {
@@ -3112,23 +3125,23 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     write("}");
                 }
 
-                function emitDispatchTableForLabeledJumps(loopResultVariable: string, currentLoop: ConvertedLoopState, outerLoop: ConvertedLoopState) {
-                    if (!currentLoop.labeledNonLocalBreaks && !currentLoop.labeledNonLocalContinues) {
+                function emitDispatchTableForLabeledJumps(loopResultVariable: string, currentScope: SynthesizedScopeState, outerScope: SynthesizedScopeState) {
+                    if (!currentScope.labeledNonLocalBreaks && !currentScope.labeledNonLocalContinues) {
                         return;
                     }
 
                     write(`switch(${loopResultVariable}) {`);
                     increaseIndent();
 
-                    emitDispatchEntriesForLabeledJumps(currentLoop.labeledNonLocalBreaks, /*isBreak*/ true, loopResultVariable, outerLoop);
-                    emitDispatchEntriesForLabeledJumps(currentLoop.labeledNonLocalContinues, /*isBreak*/ false, loopResultVariable, outerLoop);
+                    emitDispatchEntriesForLabeledJumps(currentScope.labeledNonLocalBreaks, /*isBreak*/ true, loopResultVariable, outerScope);
+                    emitDispatchEntriesForLabeledJumps(currentScope.labeledNonLocalContinues, /*isBreak*/ false, loopResultVariable, outerScope);
 
                     decreaseIndent();
                     writeLine();
                     write("}");
                 }
 
-                function emitDispatchEntriesForLabeledJumps(table: Map<string>, isBreak: boolean, loopResultVariable: string, outerLoop: ConvertedLoopState): void {
+                function emitDispatchEntriesForLabeledJumps(table: Map<string>, isBreak: boolean, loopResultVariable: string, outerScope: SynthesizedScopeState): void {
                     if (!table) {
                         return;
                     }
@@ -3140,7 +3153,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                         // if there are no outer converted loop or outer label in question is located inside outer converted loop
                         // then emit labeled break\continue
                         // otherwise propagate pair 'label -> marker' to outer converted loop and emit 'return labelMarker' so outer loop can later decide what to do
-                        if (!outerLoop || (outerLoop.labels && outerLoop.labels[labelText])) {
+                        if (!outerScope || (outerScope.labels && outerScope.labels[labelText])) {
                             if (isBreak) {
                                 write("break ");
                             }
@@ -3150,7 +3163,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                             write(`${labelText};`);
                         }
                         else {
-                            setLabeledJump(outerLoop, isBreak, labelText, labelMarker);
+                            setLabeledJump(outerScope, isBreak, labelText, labelMarker);
                             write(`return ${loopResultVariable};`);
                         }
                     }
@@ -3158,10 +3171,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitForStatement(node: ForStatement) {
-                emitLoop(node, emitForStatementWorker);
+                emitBlockWithLocals(node, emitForStatementWorker);
             }
 
-            function emitForStatementWorker(node: ForStatement, loop: ConvertedLoop) {
+            function emitForStatementWorker(node: ForStatement, loop: SynthesizedScope) {
                 let endPos = emitToken(SyntaxKind.ForKeyword, node.pos);
                 write(" ");
                 endPos = emitToken(SyntaxKind.OpenParenToken, endPos);
@@ -3185,7 +3198,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write(")");
 
                 if (loop) {
-                    emitConvertedLoopCall(loop, /*emitAsBlock*/ true);
+                    emitCallOfSynthesizedScope(loop, /*emitAsBlock*/ true);
                 }
                 else {
                     emitNormalLoopBody(node, /*emitAsEmbeddedStatement*/ true);
@@ -3194,14 +3207,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
 
             function emitForInOrForOfStatement(node: ForInStatement | ForOfStatement) {
                 if (languageVersion < ScriptTarget.ES6 && node.kind === SyntaxKind.ForOfStatement) {
-                    emitLoop(node, emitDownLevelForOfStatementWorker);
+                    emitBlockWithLocals(node, emitDownLevelForOfStatementWorker);
                 }
                 else {
-                    emitLoop(node, emitForInOrForOfStatementWorker);
+                    emitBlockWithLocals(node, emitForInOrForOfStatementWorker);
                 }
             }
 
-            function emitForInOrForOfStatementWorker(node: ForInStatement | ForOfStatement, loop: ConvertedLoop) {
+            function emitForInOrForOfStatementWorker(node: ForInStatement | ForOfStatement, loop: SynthesizedScope) {
                 let endPos = emitToken(SyntaxKind.ForKeyword, node.pos);
                 write(" ");
                 endPos = emitToken(SyntaxKind.OpenParenToken, endPos);
@@ -3226,14 +3239,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 emitToken(SyntaxKind.CloseParenToken, node.expression.end);
 
                 if (loop) {
-                    emitConvertedLoopCall(loop, /*emitAsBlock*/ true);
+                    emitCallOfSynthesizedScope(loop, /*emitAsBlock*/ true);
                 }
                 else {
                     emitNormalLoopBody(node, /*emitAsEmbeddedStatement*/ true);
                 }
             }
 
-            function emitDownLevelForOfStatementWorker(node: ForOfStatement, loop: ConvertedLoop) {
+            function emitDownLevelForOfStatementWorker(node: ForOfStatement, loop: SynthesizedScope) {
                 // The following ES6 code:
                 //
                 //    for (let v of expr) { }
@@ -3365,7 +3378,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
 
                 if (loop) {
                     writeLine();
-                    emitConvertedLoopCall(loop, /*emitAsBlock*/ false);
+                    emitCallOfSynthesizedScope(loop, /*emitAsBlock*/ false);
                 }
                 else {
                     emitNormalLoopBody(node, /*emitAsEmbeddedStatement*/ false);
@@ -3377,24 +3390,24 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitBreakOrContinueStatement(node: BreakOrContinueStatement) {
-                if (convertedLoopState) {
+                if (synthesizedScope) {
                     // check if we can emit break\continue as is
                     // it is possible if either
                     //   - break\continue is statement labeled and label is located inside the converted loop
                     //   - break\continue is non-labeled and located in non-converted loop\switch statement
                     const jump = node.kind === SyntaxKind.BreakStatement ? Jump.Break : Jump.Continue;
                     const canUseBreakOrContinue =
-                        (node.label && convertedLoopState.labels && convertedLoopState.labels[node.label.text]) ||
-                        (!node.label && (convertedLoopState.allowedNonLabeledJumps & jump));
+                        (node.label && synthesizedScope.labels && synthesizedScope.labels[node.label.text]) ||
+                        (!node.label && (synthesizedScope.allowedNonLabeledJumps & jump));
 
                     if (!canUseBreakOrContinue) {
                         if (!node.label) {
                             if (node.kind === SyntaxKind.BreakStatement) {
-                                convertedLoopState.nonLocalJumps |= Jump.Break;
+                                synthesizedScope.nonLocalJumps |= Jump.Break;
                                 write(`return "break";`);
                             }
                             else {
-                                convertedLoopState.nonLocalJumps |= Jump.Continue;
+                                synthesizedScope.nonLocalJumps |= Jump.Continue;
                                 write(`return "continue";`);
                             }
                         }
@@ -3402,11 +3415,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                             let labelMarker: string;
                             if (node.kind === SyntaxKind.BreakStatement) {
                                 labelMarker = `break-${node.label.text}`;
-                                setLabeledJump(convertedLoopState, /*isBreak*/ true, node.label.text, labelMarker);
+                                setLabeledJump(synthesizedScope, /*isBreak*/ true, node.label.text, labelMarker);
                             }
                             else {
                                 labelMarker = `continue-${node.label.text}`;
-                                setLabeledJump(convertedLoopState, /*isBreak*/ false, node.label.text, labelMarker);
+                                setLabeledJump(synthesizedScope, /*isBreak*/ false, node.label.text, labelMarker);
                             }
                             write(`return "${labelMarker}";`);
                         }
@@ -3421,8 +3434,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitReturnStatement(node: ReturnStatement) {
-                if (convertedLoopState) {
-                    convertedLoopState.nonLocalJumps |= Jump.Return;
+                if (synthesizedScope) {
+                    synthesizedScope.nonLocalJumps |= Jump.Return;
                     write("return { value: ");
                     if (node.expression) {
                         emit(node.expression);
@@ -3447,6 +3460,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitSwitchStatement(node: SwitchStatement) {
+                emitBlockWithLocals(node, emitSwitchStatementWorker)
+            }
+
+            function emitSwitchStatementWorker(node: SwitchStatement, scope: SynthesizedScope) {
+                if (scope) {
+                    emitCallOfSynthesizedScope(scope, /* emitAsBlock */ false);
+                    return;
+                }
                 let endPos = emitToken(SyntaxKind.SwitchKeyword, node.pos);
                 write(" ");
                 emitToken(SyntaxKind.OpenParenToken, endPos);
@@ -3455,14 +3476,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write(" ");
 
                 let saveAllowedNonLabeledJumps: Jump;
-                if (convertedLoopState) {
-                    saveAllowedNonLabeledJumps = convertedLoopState.allowedNonLabeledJumps;
+                if (synthesizedScope) {
+                    saveAllowedNonLabeledJumps = synthesizedScope.allowedNonLabeledJumps;
                     // for switch statement allow only non-labeled break
-                    convertedLoopState.allowedNonLabeledJumps |= Jump.Break;
+                    synthesizedScope.allowedNonLabeledJumps |= Jump.Break;
                 }
                 emitCaseBlock(node.caseBlock, endPos);
-                if (convertedLoopState) {
-                    convertedLoopState.allowedNonLabeledJumps = saveAllowedNonLabeledJumps;
+                if (synthesizedScope) {
+                    synthesizedScope.allowedNonLabeledJumps = saveAllowedNonLabeledJumps;
                 }
             }
 
@@ -3549,22 +3570,31 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write(": ");
             }
 
+            function bodyOfLabeledStatementNeedsExplicitScope(node: LabeledStatement): boolean {
+                if (isIterationStatement(node.statement, /* lookInLabeledStatements */ false) ||
+                    node.statement.kind === SyntaxKind.SwitchStatement ||
+                    node.statement.kind === SyntaxKind.Block) {
+                    return shouldSynthesizeExplicitScope(<StatementWithLocals>node.statement);
+                }
+                return false;
+            }
+
             function emitLabeledStatement(node: LabeledStatement) {
-                if (!isIterationStatement(node.statement, /* lookInLabeledStatements */ false) || !shouldConvertLoopBody(<IterationStatement>node.statement)) {
+                if (!bodyOfLabeledStatementNeedsExplicitScope(node)) {
                     emitLabelAndColon(node);
                 }
 
-                if (convertedLoopState) {
-                    if (!convertedLoopState.labels) {
-                        convertedLoopState.labels = {};
+                if (synthesizedScope) {
+                    if (!synthesizedScope.labels) {
+                        synthesizedScope.labels = {};
                     }
-                    convertedLoopState.labels[node.label.text] = node.label.text;
+                    synthesizedScope.labels[node.label.text] = node.label.text;
                 }
 
                 emit(node.statement);
 
-                if (convertedLoopState) {
-                    convertedLoopState.labels[node.label.text] = undefined;
+                if (synthesizedScope) {
+                    synthesizedScope.labels[node.label.text] = undefined;
                 }
             }
 
@@ -4031,18 +4061,18 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     let initializer = node.initializer;
                     if (!initializer && languageVersion < ScriptTarget.ES6) {
 
-                        // downlevel emit for non-initialized let bindings defined in loops
-                        // for (...) {  let x; }
-                        // should be
-                        // for (...) { var <some-uniqie-name> = void 0; }
-                        // this is necessary to preserve ES6 semantic in scenarios like
-                        // for (...) { let x; console.log(x); x = 1 } // assignment on one iteration should not affect other iterations
-                        const isLetDefinedInLoop =
-                            (resolver.getNodeCheckFlags(node) & NodeCheckFlags.BlockScopedBindingInLoop) &&
-                            (getCombinedFlagsForIdentifier(<Identifier>node.name) & NodeFlags.Let);
-
+                        // downlevel emit for non-initialized let bindings should initialize them to 'void 0'
+                        // {
+                        //     let x = 1;
+                        // }
+                        // {
+                        //     let x;
+                        //     if (some condition) x = 5
+                        //     if (x) { (2) }
+                        // }
+                        // if we won't do this (2) can be executed even when 'some condition' is false  
                         // NOTE: default initialization should not be added to let bindings in for-in\for-of statements
-                        if (isLetDefinedInLoop &&
+                        if ((getCombinedFlagsForIdentifier(<Identifier>node.name) & NodeFlags.Let) &&
                             node.parent.parent.kind !== SyntaxKind.ForInStatement &&
                             node.parent.parent.kind !== SyntaxKind.ForOfStatement) {
                             initializer = createVoidZero();
@@ -4530,12 +4560,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitSignatureAndBody(node: FunctionLikeDeclaration) {
-                const saveConvertedLoopState = convertedLoopState;
+                const saveConvertedLoopState = synthesizedScope;
                 const saveTempFlags = tempFlags;
                 const saveTempVariables = tempVariables;
                 const saveTempParameters = tempParameters;
 
-                convertedLoopState = undefined;
+                synthesizedScope = undefined;
                 tempFlags = 0;
                 tempVariables = undefined;
                 tempParameters = undefined;
@@ -4561,8 +4591,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     emitExportMemberAssignment(node);
                 }
 
-                Debug.assert(convertedLoopState === undefined);
-                convertedLoopState = saveConvertedLoopState;
+                Debug.assert(synthesizedScope === undefined);
+                synthesizedScope = saveConvertedLoopState;
 
                 tempFlags = saveTempFlags;
                 tempVariables = saveTempVariables;
@@ -4880,20 +4910,20 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitConstructor(node: ClassLikeDeclaration, baseTypeElement: ExpressionWithTypeArguments) {
-                const saveConvertedLoopState = convertedLoopState;
+                const saveConvertedLoopState = synthesizedScope;
                 const saveTempFlags = tempFlags;
                 const saveTempVariables = tempVariables;
                 const saveTempParameters = tempParameters;
 
-                convertedLoopState = undefined;
+                synthesizedScope = undefined;
                 tempFlags = 0;
                 tempVariables = undefined;
                 tempParameters = undefined;
 
                 emitConstructorWorker(node, baseTypeElement);
 
-                Debug.assert(convertedLoopState === undefined);
-                convertedLoopState = saveConvertedLoopState;
+                Debug.assert(synthesizedScope === undefined);
+                synthesizedScope = saveConvertedLoopState;
 
                 tempFlags = saveTempFlags;
                 tempVariables = saveTempVariables;
@@ -5238,9 +5268,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 const saveTempVariables = tempVariables;
                 const saveTempParameters = tempParameters;
                 const saveComputedPropertyNamesToGeneratedNames = computedPropertyNamesToGeneratedNames;
-                const saveConvertedLoopState = convertedLoopState;
+                const saveConvertedLoopState = synthesizedScope;
 
-                convertedLoopState = undefined;
+                synthesizedScope = undefined;
                 tempFlags = 0;
                 tempVariables = undefined;
                 tempParameters = undefined;
@@ -5268,8 +5298,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write(";");
                 emitTempDeclarations(/*newLine*/ true);
 
-                Debug.assert(convertedLoopState === undefined);
-                convertedLoopState = saveConvertedLoopState;
+                Debug.assert(synthesizedScope === undefined);
+                synthesizedScope = saveConvertedLoopState;
 
                 tempFlags = saveTempFlags;
                 tempVariables = saveTempVariables;
@@ -5952,17 +5982,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 emitEnd(node.name);
                 write(") ");
                 if (node.body.kind === SyntaxKind.ModuleBlock) {
-                    const saveConvertedLoopState = convertedLoopState;
+                    const saveConvertedLoopState = synthesizedScope;
                     const saveTempFlags = tempFlags;
                     const saveTempVariables = tempVariables;
-                    convertedLoopState = undefined;
+                    synthesizedScope = undefined;
                     tempFlags = 0;
                     tempVariables = undefined;
 
                     emit(node.body);
 
-                    Debug.assert(convertedLoopState === undefined);
-                    convertedLoopState = saveConvertedLoopState;
+                    Debug.assert(synthesizedScope === undefined);
+                    synthesizedScope = saveConvertedLoopState;
 
                     tempFlags = saveTempFlags;
                     tempVariables = saveTempVariables;
