@@ -2877,12 +2877,23 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
 
             function emitBlockWithLocals(node: StatementWithLocals, blockEmitter: (n: StatementWithLocals, scope: SynthesizedScope) => void): void {
                 if (shouldSynthesizeExplicitScope(node)) {
+                    const wrapInBlock = !isIterationStatement(node, /*lookInLabeledStatements*/ false);
+                    if (wrapInBlock) {
+                        write("{");
+                        writeLine();
+                        increaseIndent();
+                    }
                     const scope = convertToExplicitScope(node);
                     if (node.parent.kind === SyntaxKind.LabeledStatement) {
                         // if parent of the scope was labeled statement - emit label before scope
                         emitLabelAndColon(<LabeledStatement>node.parent);
                     }
                     blockEmitter(node, scope);
+                    if (wrapInBlock) {
+                        decreaseIndent();
+                        writeLine();
+                        write("}");
+                    }
                 }
                 else {
 
