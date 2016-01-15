@@ -174,6 +174,7 @@ namespace ts {
         const unionTypes: Map<UnionType> = {};
         const intersectionTypes: Map<IntersectionType> = {};
         const stringLiteralTypes: Map<StringLiteralType> = {};
+        const freshStringLiteralTypes: Map<StringLiteralType> = {};
         let emitExtends = false;
         let emitDecorate = false;
         let emitParam = false;
@@ -2713,7 +2714,7 @@ namespace ts {
                 if (type.flags & TypeFlags.PredicateType && (declaration.kind === SyntaxKind.PropertyDeclaration || declaration.kind === SyntaxKind.PropertySignature)) {
                     return type;
                 }
-                return getWidenedType(type);
+                return declaration.flags & NodeFlags.Const ? getWidenedTypeForImmutableBinding(type) : getWidenedTypeForMutableBinding(type);
             }
 
             // Rest parameters default to type any[], other parameters default to type any
@@ -4577,12 +4578,15 @@ namespace ts {
             return links.resolvedType;
         }
 
-        function getStringLiteralTypeForText(text: string): StringLiteralType {
-            if (hasProperty(stringLiteralTypes, text)) {
-                return stringLiteralTypes[text];
+        function getStringLiteralTypeForText(text: string, shouldGetFreshType: boolean): StringLiteralType {
+            const typeMap = shouldGetFreshType ? freshStringLiteralTypes : stringLiteralTypes;
+
+            if (hasProperty(typeMap, text)) {
+                return typeMap[text];
             }
 
-            const type = stringLiteralTypes[text] = <StringLiteralType>createType(TypeFlags.StringLiteral);
+            const freshnessFlag = shouldGetFreshType ? TypeFlags.ContainsFreshLiteralType : TypeFlags.None;
+            const type = typeMap[text] = <StringLiteralType>createType(TypeFlags.StringLiteral | freshnessFlag);
             type.text = text;
             return type;
         }
@@ -4590,7 +4594,7 @@ namespace ts {
         function getTypeFromStringLiteralTypeNode(node: StringLiteralTypeNode): Type {
             const links = getNodeLinks(node);
             if (!links.resolvedType) {
-                links.resolvedType = getStringLiteralTypeForText(node.text);
+                links.resolvedType = getStringLiteralTypeForText(node.text, /*shouldGetFreshType*/ false);
             }
             return links.resolvedType;
         }
@@ -5125,6 +5129,12 @@ namespace ts {
                 let result: Ternary;
                 // both types are the same - covers 'they are the same primitive type or both are Any' or the same type parameter cases
                 if (source === target) return Ternary.True;
+                if (source.flags & TypeFlags.StringLiteral && target.flags & TypeFlags.StringLiteral) {
+                    // String literal freshness may affect identity checking.
+                    return (source as StringLiteralType).text === (target as StringLiteralType).text ?
+                        Ternary.True :
+                        Ternary.False;
+                }
                 if (relation === identityRelation) {
                     return isIdenticalTo(source, target);
                 }
@@ -5138,7 +5148,11 @@ namespace ts {
                         return result;
                     }
                 }
-                if (source.flags & TypeFlags.StringLiteral && target === stringType) return Ternary.True;
+                if (source.flags & TypeFlags.StringLiteral) {
+                    if (target === stringType) {
+                        return Ternary.True;
+                    }
+                }
                 if (relation === assignableRelation) {
                     if (isTypeAny(source)) return Ternary.True;
                     if (source === numberType && target.flags & TypeFlags.Enum) return Ternary.True;
@@ -6086,10 +6100,29 @@ namespace ts {
             return createAnonymousType(type.symbol, members, emptyArray, emptyArray, stringIndexType, numberIndexType);
         }
 
+        function getWidenedTypeForMutableBinding(type: Type): Type {
+            if (type.flags & TypeFlags.StringLiteral) {
+                return stringType;
+            }
+            return getWidenedType(type);
+        }
+
+        function getWidenedTypeForImmutableBinding(type: Type): Type {
+            if (type.flags & (TypeFlags.ContainsFreshLiteralType | TypeFlags.StringLiteral)) {
+                return getStringLiteralTypeForText((type as StringLiteralType).text, /*shouldGetFreshType*/ false);
+            }
+            return getWidenedType(type);
+        }
+
         function getWidenedType(type: Type): Type {
             if (type.flags & TypeFlags.RequiresWidening) {
                 if (type.flags & (TypeFlags.Undefined | TypeFlags.Null)) {
                     return anyType;
+                }
+                if (type.flags & TypeFlags.StringLiteral) {
+                    // 'RequiresWidening' implies this should be a fresh string literal.
+                    // All fresh string literals in non-binding locations should be widened to string.
+                    return stringType;
                 }
                 if (type.flags & TypeFlags.PredicateType) {
                     return booleanType;
@@ -9117,8 +9150,9 @@ namespace ts {
                     // If the effective argument type is 'undefined', there is no synthetic type
                     // for the argument. In that case, we should check the argument.
                     if (argType === undefined) {
+                        // TODO (drosen): Probably shouldn't need special logic here since we always get the literal text unless widening.
                         argType = arg.kind === SyntaxKind.StringLiteral && !reportErrors
-                            ? getStringLiteralTypeForText((<StringLiteral>arg).text)
+                            ? getStringLiteralTypeForText((<StringLiteral>arg).text, /*shouldGetFreshType*/ true)
                             : checkExpressionWithContextualType(arg, paramType, excludeArgument && excludeArgument[i] ? identityMapper : undefined);
                     }
 
@@ -9313,7 +9347,7 @@ namespace ts {
                     case SyntaxKind.Identifier:
                     case SyntaxKind.NumericLiteral:
                     case SyntaxKind.StringLiteral:
-                        return getStringLiteralTypeForText((<Identifier | LiteralExpression>element.name).text);
+                        return getStringLiteralTypeForText((<Identifier | LiteralExpression>element.name).text, /*shouldGetFreshType*/ true);
 
                     case SyntaxKind.ComputedPropertyName:
                         const nameType = checkComputedPropertyName(<ComputedPropertyName>element.name);
@@ -10960,12 +10994,7 @@ namespace ts {
         }
 
         function checkStringLiteralExpression(node: StringLiteral): Type {
-            const contextualType = getContextualType(node);
-            if (contextualType && contextualTypeIsStringLiteralType(contextualType)) {
-                return getStringLiteralTypeForText(node.text);
-            }
-
-            return stringType;
+            return getStringLiteralTypeForText(node.text, /*shouldGetFreshType*/ true);
         }
 
         function checkTemplateExpression(node: TemplateExpression): Type {
