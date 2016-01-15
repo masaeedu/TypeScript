@@ -1,7 +1,7 @@
 === tests/cases/compiler/downlevelLetConst13.ts ===
 
 'use strict'
->'use strict' : string
+>'use strict' : "use strict"
 
 // exported let\const bindings should not be renamed
 
@@ -11,7 +11,7 @@ export let foo = 10;
 
 export const bar = "123"
 >bar : string
->"123" : string
+>"123" : "123"
 
 export let [bar1] = [1];
 >bar1 : number

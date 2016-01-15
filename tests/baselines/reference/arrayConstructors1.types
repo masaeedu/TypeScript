@@ -10,20 +10,20 @@ x = new Array(1);
 >1 : number
 
 x = new Array('hi', 'bye'); 
->x = new Array('hi', 'bye') : string[]
+>x = new Array('hi', 'bye') : any
 >x : string[]
->new Array('hi', 'bye') : string[]
+>new Array('hi', 'bye') : any
 >Array : ArrayConstructor
->'hi' : string
->'bye' : string
+>'hi' : "hi"
+>'bye' : "bye"
 
 x = new Array<string>('hi', 'bye');
 >x = new Array<string>('hi', 'bye') : string[]
 >x : string[]
 >new Array<string>('hi', 'bye') : string[]
 >Array : ArrayConstructor
->'hi' : string
->'bye' : string
+>'hi' : "hi"
+>'bye' : "bye"
 
 var y: number[];
 >y : number[]

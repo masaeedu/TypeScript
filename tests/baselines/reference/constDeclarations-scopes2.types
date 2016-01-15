@@ -3,7 +3,7 @@
 // global
 const c = "string";
 >c : string
->"string" : string
+>"string" : "string"
 
 var n: number;
 >n : number
