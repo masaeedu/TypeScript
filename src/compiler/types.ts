@@ -2370,7 +2370,7 @@ namespace ts {
     export enum ModuleResolutionKind {
         Classic  = 1,
         NodeJs   = 2,
-        BaseUrl  = 3
+        BaseUrlOnly  = 3
     }
 
     export type RootPaths = string[];

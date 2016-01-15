@@ -469,7 +469,7 @@ import b = require("./moduleB.ts");
                 const file2: File = { name: "/root/folder2/file2.ts" };
                 const file3: File = { name: "/root/folder2/file3.ts" };
                 const host = createModuleResolutionHost(hasDirectoryExists, file1, file2, file3);
-                const options: CompilerOptions = { moduleResolution: ModuleResolutionKind.BaseUrl, baseUrl: "/root" };
+                const options: CompilerOptions = { moduleResolution: ModuleResolutionKind.BaseUrlOnly, baseUrl: "/root" };
                 {
                     const result = baseUrlModuleNameResolver("folder2/file2", file1.name, options, host);
                     assert.isTrue(result.resolvedModule !== undefined, "module should be resolved");
@@ -504,7 +504,7 @@ import b = require("./moduleB.ts");
                 const file5: File = { name: "/root/someanotherfolder/file5.ts" }
                 const host = createModuleResolutionHost(hasDirectoryExists, file1, file2, file3, file4, file5);
                 const options: CompilerOptions = {
-                    moduleResolution: ModuleResolutionKind.BaseUrl,
+                    moduleResolution: ModuleResolutionKind.BaseUrlOnly,
                     baseUrl: "/root",
                     paths: {
                         "*": [
@@ -569,7 +569,7 @@ import b = require("./moduleB.ts");
                 let file3: File = { name: "/root/generated/folder2/file3.ts" };
                 const host = createModuleResolutionHost(hasDirectoryExists, file1, file2, file3);
                 const options: CompilerOptions = {
-                    moduleResolution: ModuleResolutionKind.BaseUrl,
+                    moduleResolution: ModuleResolutionKind.BaseUrlOnly,
                     baseUrl: "/root",
                     paths: {
                         "*": [
