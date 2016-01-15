@@ -157,7 +157,7 @@ foo<number|string>("hello", 1, 2);
 >2 : number
 
 foo("hello", "world");
->foo("hello", "world") : any
+>foo("hello", "world") : void
 >foo : <T>(...a: T[]) => void
 >"hello" : "hello"
 >"world" : "world"

@@ -10,9 +10,9 @@ x = new Array(1);
 >1 : number
 
 x = new Array('hi', 'bye'); 
->x = new Array('hi', 'bye') : any
+>x = new Array('hi', 'bye') : string[]
 >x : string[]
->new Array('hi', 'bye') : any
+>new Array('hi', 'bye') : string[]
 >Array : ArrayConstructor
 >'hi' : "hi"
 >'bye' : "bye"

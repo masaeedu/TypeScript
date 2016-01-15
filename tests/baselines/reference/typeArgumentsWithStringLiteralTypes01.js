@@ -222,11 +222,11 @@ declare function fun1<T>(x: T, y: T): T;
 declare function fun2<T, U>(x: T, y: U): T | U;
 declare function fun3<T>(...args: T[]): T;
 declare namespace n1 {
-    let a: any;
+    let a: string;
     let b: string;
     let c: string;
     let d: string;
-    let e: any;
+    let e: string;
 }
 declare namespace n2 {
     let a: string;
