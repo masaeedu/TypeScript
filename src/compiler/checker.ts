@@ -6977,7 +6977,7 @@ namespace ts {
 
             checkCollisionWithCapturedSuperVariable(node, node);
             checkCollisionWithCapturedThisVariable(node, node);
-            checkBlockScopedBindingCapturedInLoop(node, symbol);
+            checkNestedBlockScopedBinding(node, symbol);
 
             return getNarrowedTypeOfSymbol(getExportSymbolOfValueSymbolIfExported(symbol), node);
         }
@@ -6994,7 +6994,7 @@ namespace ts {
             return false;
         }
 
-        function checkBlockScopedBindingCapturedInLoop(node: Identifier, symbol: Symbol): void {
+        function checkNestedBlockScopedBinding(node: Identifier, symbol: Symbol): void {
             if (languageVersion >= ScriptTarget.ES6 ||
                 (symbol.flags & (SymbolFlags.BlockScopedVariable | SymbolFlags.Class)) === 0 ||
                 symbol.valueDeclaration.parent.kind === SyntaxKind.CatchClause) {
@@ -7027,18 +7027,37 @@ namespace ts {
             }
 
             const inFunction = isInsideFunction(node.parent, container);
-
+            let enclosingIterationStatement: Node;
             let current = container;
-            while (current && !nodeStartsNewLexicalEnvironment(current)) {
-                if (isIterationStatement(current, /*lookInLabeledStatements*/ false)) {
-                    if (inFunction) {
-                        getNodeLinks(current).flags |= NodeCheckFlags.LoopWithBlockScopedBindingCapturedInFunction;
+
+            if (inFunction) {
+                while (current && !nodeStartsNewLexicalEnvironment(current)) {
+                    if (isIterationStatement(current, /*lookInLabeledStatements*/ false)) {
+                        enclosingIterationStatement = current;
+                        break;
                     }
-                    // mark value declaration so during emit they can have a special handling
-                    getNodeLinks(<VariableDeclaration>symbol.valueDeclaration).flags |= NodeCheckFlags.BlockScopedBindingInLoop;
-                    break;
+                    current = current.parent;
                 }
-                current = current.parent;
+            }
+
+            if (enclosingIterationStatement) {
+                // mark iteration statement as containing block scoped binding that is captured in loop
+                getNodeLinks(enclosingIterationStatement).flags |= NodeCheckFlags.LoopWithCapturedBlockScopedBinding;
+            }
+
+            if (isStatementWithLocals(container)) {
+                // mark nested block scoped bindings
+                const links = getNodeLinks(<VariableDeclaration>symbol.valueDeclaration);
+                const declaredInIterationStatement =
+                    isIterationStatement(container, /*lookInLabeledStatements*/ false) ||
+                    container.kind === SyntaxKind.Block && isIterationStatement(container.parent, /*lookInLabeledStatements*/ false);
+
+                if (inFunction && declaredInIterationStatement) {
+                    links.flags |= NodeCheckFlags.NestedCapturedBlockScopedBinding;
+                }
+                else {
+                    links.flags |= NodeCheckFlags.NestedBlockScopedBinding;
+                }
             }
         }
 
