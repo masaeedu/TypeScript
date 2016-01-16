@@ -108,7 +108,7 @@ var y = true;
 >true : boolean
 {
     const y = "";
->y : string
+>y : ""
 >"" : ""
 
     const [z6] = [true]
@@ -140,7 +140,7 @@ var y = true;
     use(y);
 >use(y) : any
 >use : (a: any) => any
->y : string
+>y : ""
 
     use(z6);
 >use(z6) : any
@@ -166,7 +166,7 @@ var z5 = 1;
 >1 : number
 {
     const z = "";
->z : string
+>z : ""
 >"" : ""
 
     const [z5] = [5];
@@ -194,7 +194,7 @@ var z5 = 1;
     use(z);
 >use(z) : any
 >use : (a: any) => any
->z : string
+>z : ""
 }
 use(y);
 >use(y) : any
