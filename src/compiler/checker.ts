@@ -27,6 +27,8 @@ namespace ts {
         return symbol.id;
     }
 
+    declare let gTypeToString: (type: Type) => string;
+
     export function createTypeChecker(host: TypeCheckerHost, produceDiagnostics: boolean): TypeChecker {
         // Cancellation that controls whether or not we can cancel in the middle of type checking.
         // In general cancelling is *not* safe for the type checker.  We might be in the middle of
@@ -44,6 +46,8 @@ namespace ts {
         const Symbol = objectAllocator.getSymbolConstructor();
         const Type = objectAllocator.getTypeConstructor();
         const Signature = objectAllocator.getSignatureConstructor();
+
+        gTypeToString = typeToString;
 
         let typeCount = 0;
         let symbolCount = 0;
@@ -7930,6 +7934,10 @@ namespace ts {
             return context.mapper;
         }
 
+        function identity<T>(x: T): T {
+            return x;
+        }
+
         function identityMapper(type: Type): Type {
             return type;
         }
@@ -7986,10 +7994,22 @@ namespace ts {
             if (signature.typePredicate) {
                 freshTypePredicate = cloneTypePredicate(signature.typePredicate, mapper);
             }
+            const returnType = instantiateType(signature.resolvedReturnType, mapper);
+            const callSignature = returnType && getSingleCallSignature(returnType);
+            if  (callSignature && !callSignature.typeParameters && hasFreeTypeVars(callSignature)) {
+                // this is an inferred signature
+                const paramTypes = map(callSignature.parameters, getTypeOfSymbol);
+                if (!contains(paramTypes, callSignature.resolvedReturnType)) {
+                    paramTypes.push(callSignature.resolvedReturnType);
+                }
+                const typeParams = <TypeParameter[]>filter(paramTypes, type => !!(type.flags & TypeFlags.TypeParameter));
+                Debug.assert(!!typeParams.length);
+                callSignature.typeParameters = typeParams;
+            }
             const result = createSignature(signature.declaration, freshTypeParameters,
                 signature.thisParameter && instantiateSymbol(signature.thisParameter, mapper),
                 instantiateList(signature.parameters, mapper, instantiateSymbol),
-                instantiateType(signature.resolvedReturnType, mapper),
+                returnType,
                 freshTypePredicate,
                 signature.minArgumentCount, signature.hasRestParameter, signature.hasLiteralTypes);
             result.target = signature;
@@ -10427,7 +10447,14 @@ namespace ts {
                 const targetLen = targetSignatures.length;
                 const len = sourceLen < targetLen ? sourceLen : targetLen;
                 for (let i = 0; i < len; i++) {
-                    inferFromSignature(getErasedSignature(sourceSignatures[sourceLen - len + i]), getErasedSignature(targetSignatures[targetLen - len + i]));
+                    const sourceSignature = sourceSignatures[sourceLen - len + i];
+                    const targetSignature = targetSignatures[targetLen - len + i];
+
+                    const mapper = isPolymorphicSignature(sourceSignature) && isPolymorphicSignature(targetSignature)
+                        ? identity
+                        : getErasedSignature;
+
+                    inferFromSignature(mapper(sourceSignature), mapper(targetSignature));
                 }
             }
 
@@ -17491,7 +17518,7 @@ namespace ts {
                     const contextualType = getApparentTypeOfContextualType(<Expression>node);
                     if (contextualType) {
                         const contextualSignature = getSingleCallSignature(contextualType);
-                        if (contextualSignature && !contextualSignature.typeParameters) {
+                        if (contextualSignature && !isPolymorphicSignature(contextualSignature)) {
                             return getOrCreateTypeFromSignature(instantiateSignatureInContextOf(signature, contextualSignature, getContextualMapper(node)));
                         }
                     }
@@ -17499,6 +17526,15 @@ namespace ts {
             }
 
             return type;
+        }
+
+        function isPolymorphicSignature(signature: Signature | undefined) {
+            return signature && (signature.typeParameters || hasFreeTypeVars(signature));
+        }
+
+        function hasFreeTypeVars(signature: Signature) {
+            return signature.resolvedReturnType && signature.resolvedReturnType.flags & TypeFlags.TypeParameter 
+                   || forEach(signature.parameters, (symb) => getTypeOfSymbol(symb).flags & TypeFlags.TypeParameter);
         }
 
         /**
