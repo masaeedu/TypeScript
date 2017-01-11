@@ -10465,9 +10465,19 @@ namespace ts {
                 }
 
                 Debug.assert(t !== subst);
+                for (const key of Object.keys(env)) {
+                    if (env[key] === t) {
+                        env[key] = subst;
+                    }
+                }
                 env[t.id] = subst;
+                env[subst.id] = subst;
+
                 if (!types[t.id]) {
                     types[t.id] = t;
+                }
+                if (!types[subst.id]) {
+                    types[subst.id] = subst;
                 }
             }
 
@@ -10555,7 +10565,7 @@ namespace ts {
                             const us = (<InfExt> typeInferences).log
                                 .map(([x, y]) => typeToString(x) + ' ~ ' + typeToString(y))
                                 .join('\n');
-                            
+
                             console.log(' -----------');
                             console.log(us);
 
@@ -10739,7 +10749,7 @@ namespace ts {
                         current[i].shift();
                         continue;
                     }
-                    
+
                     if (candidates[1].flags & TypeFlags.TypeParameter) {
                         current = substituteType(candidates[1], candidates[0], current);
                         current[i].shift();
@@ -17704,7 +17714,7 @@ namespace ts {
         }
 
         function hasFreeTypeVars(signature: Signature) {
-            return signature.resolvedReturnType && signature.resolvedReturnType.flags & TypeFlags.TypeParameter 
+            return signature.resolvedReturnType && signature.resolvedReturnType.flags & TypeFlags.TypeParameter
                    || forEach(signature.parameters, (symb) => getTypeOfSymbol(symb).flags & TypeFlags.TypeParameter);
         }
 
