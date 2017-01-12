@@ -15077,7 +15077,12 @@ namespace ts {
                         argType = checkExpressionWithContextualType(arg, paramType, mapper);
                     }
 
+                    // turn off type logging if the argument is excluded
+                    const cachedLog = (<InfExt> context.inferences).log;
+                    excludeArgument && excludeArgument[i] !== undefined && ((<InfExt> context.inferences).log = undefined);
+
                     inferTypesWithContext(context, argType, paramType);
+                    excludeArgument && excludeArgument[i] !== undefined && ((<InfExt> context.inferences).log = cachedLog);
                 }
             }
 
