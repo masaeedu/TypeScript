@@ -4,8 +4,8 @@
 ////    <T>(x: T): void
 ////}
 ////function f6(x: <T extends I>(p: T) => void) { }
-////// x should not be contextually typed so this should be an error
-////f6(/**/x => x<number>())
+////// x can be contextually typed since inference applies to generic functions as well
+////f6(/**/x => x<number>(10))
 
-verify.quickInfoAt("", "(parameter) x: any");
-verify.numberOfErrorsInCurrentFile(1);
+verify.quickInfoAt("", "(parameter) x: T extends I");
+verify.numberOfErrorsInCurrentFile(0);
